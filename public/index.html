@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>☕ Виртуальное кафе</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.5.0/aframe.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ЭКРАН ВХОДА -->
+  <div id="landing">
+    <div class="panel">
+      <h1>☕ Виртуальное кафе</h1>
+      <p class="subtitle">Встречи, разговоры и голос — прямо в браузере</p>
+
+      <label>Ваше имя</label>
+      <input id="nameInput" type="text" maxlength="24" placeholder="Как вас представить?" />
+
+      <label>Цвет аватара</label>
+      <div id="colorPicker" class="color-picker"></div>
+
+      <div class="tabs">
+        <button id="tabCreate" class="tab active">Создать комнату</button>
+        <button id="tabJoin" class="tab">Войти по коду</button>
+      </div>
+
+      <div id="paneCreate" class="pane">
+        <button id="createBtn" class="primary">Создать кафе</button>
+      </div>
+
+      <div id="paneJoin" class="pane hidden">
+        <input id="joinCodeInput" type="text" maxlength="8" placeholder="Код комнаты" style="text-transform:uppercase" />
+        <button id="joinBtn" class="primary">Войти</button>
+      </div>
+
+      <p id="landingError" class="error hidden"></p>
+    </div>
+  </div>
+
+  <!-- ПАНЕЛЬ ПРИГЛАШЕНИЯ (после создания/входа в комнату) -->
+  <div id="roomPanel" class="hud hidden">
+    <div class="room-code-box">
+      <span>Код комнаты</span>
+      <strong id="roomCodeLabel">——</strong>
+      <button id="copyLinkBtn" title="Скопировать ссылку">🔗</button>
+    </div>
+    <button id="inviteBtn" class="tg-btn">✈️ Пригласить в Telegram</button>
+  </div>
+
+  <!-- Мини-форма приглашения -->
+  <div id="invitePanel" class="modal hidden">
+    <div class="modal-box">
+      <h3>Отправить приглашение в Telegram</h3>
+      <label>Chat ID получателя (необязательно — иначе уйдёт на chat по умолчанию)</label>
+      <input id="inviteChatId" type="text" placeholder="например -1001234567890" />
+      <div class="modal-actions">
+        <button id="inviteSendBtn" class="primary">Отправить</button>
+        <button id="inviteCancelBtn" class="secondary">Отмена</button>
+      </div>
+      <p id="inviteStatus" class="status"></p>
+    </div>
+  </div>
+
+  <!-- Список участников -->
+  <div id="userList" class="hud userlist hidden"></div>
+
+  <!-- Чат -->
+  <div id="chatBox" class="hud chatbox hidden">
+    <div id="chatMessages"></div>
+    <input id="chatInput" type="text" placeholder="Написать сообщение… (Enter)" maxlength="500" />
+  </div>
+
+  <!-- Управление голосом -->
+  <div id="voiceControls" class="hud voice-controls hidden">
+    <button id="muteBtn">🎙️</button>
+    <span id="micStatus">Микрофон включён</span>
+  </div>
+
+  <div id="controlsHint" class="hud hint hidden">WASD — идти · мышь — оглядеться · Enter — чат</div>
+
+  <!-- 3D СЦЕНА -->
+  <a-scene id="scene" class="hidden" renderer="colorManagement: true" vr-mode-ui="enabled: false">
+    <a-assets>
+      <img id="floorTex" src="https://cdn.aframe.io/a-painter/images/floor.jpg" crossorigin="anonymous">
+    </a-assets>
+
+    <!-- Освещение -->
+    <a-entity light="type: ambient; color: #6b5b4f; intensity: 0.7"></a-entity>
+    <a-entity light="type: point; color: #ffcf9c; intensity: 0.9; distance: 12" position="0 4 0"></a-entity>
+    <a-entity light="type: point; color: #ffd9a0; intensity: 0.6; distance: 10" position="-8 3.5 -6"></a-entity>
+    <a-entity light="type: point; color: #7fd8ff; intensity: 0.5; distance: 8" position="8 3.5 -6"></a-entity>
+
+    <!-- Пол и стены кафе -->
+    <a-plane position="0 0 0" rotation="-90 0 0" width="26" height="20" color="#3a2b22" material="roughness:0.9"></a-plane>
+    <a-box position="0 2.5 -10" width="26" height="5" depth="0.2" color="#2a1f19"></a-box>
+    <a-box position="-13 2.5 0" rotation="0 90 0" width="20" height="5" depth="0.2" color="#2a1f19"></a-box>
+    <a-box position="13 2.5 0" rotation="0 90 0" width="20" height="5" depth="0.2" color="#2a1f19"></a-box>
+    <a-box position="0 2.5 10" width="26" height="5" depth="0.2" color="#241a15"></a-box>
+
+    <!-- Барная стойка -->
+    <a-box position="0 0.6 -8.5" width="8" height="1.2" depth="1" color="#5c3d2e"></a-box>
+    <a-box position="0 1.3 -8.5" width="8" height="0.1" depth="1.1" color="#caa06a"></a-box>
+    <a-entity id="npcBarman" position="0 1 -9.3" geometry="primitive: box; width:0.5; height:1.7; depth:0.3" material="color:#c0392b">
+      <a-text value="Бармен" align="center" position="0 1.2 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
+    </a-entity>
+
+    <!-- Столики (3 обычных зала) -->
+    <a-entity id="tables"></a-entity>
+
+    <!-- VIP-комнаты -->
+    <a-entity id="vipRooms"></a-entity>
+
+    <!-- Сцена караоке -->
+    <a-box position="-10 0.3 8" width="5" height="0.6" depth="3" color="#4b2e2e"></a-box>
+    <a-entity id="npcSinger" position="-10 1 8" geometry="primitive: box; width:0.5; height:1.7; depth:0.3" material="color:#f1c40f">
+      <a-text value="Певец" align="center" position="0 1.2 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
+    </a-entity>
+    <a-text value="🎤 КАРАОКЕ" position="-10 2.4 8" align="center" color="#f1c40f" scale="1.5 1.5 1.5"></a-text>
+
+    <!-- Игрок (камера) -->
+    <a-entity id="rig" position="0 1.6 6" movement-controls="fly:false; speed:0.14">
+      <a-camera id="camera" look-controls="pointerLockEnabled:true" wasd-controls="acceleration:60">
+        <a-cursor></a-cursor>
+      </a-camera>
+    </a-entity>
+
+    <!-- Остальные гости добавляются сюда динамически -->
+    <a-entity id="otherPlayers"></a-entity>
+  </a-scene>
+
+  <script src="app.js"></script>
+</body>
+</html>
