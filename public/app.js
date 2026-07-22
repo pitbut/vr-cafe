@@ -5,6 +5,35 @@
 const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#1abc9c', '#e67e22', '#ecf0f1'];
 const MAX_VOICE_DISTANCE = 9; // метров, после которых голос не слышен
 
+const MENU_ITEMS = [
+  { name: 'Капучино', emoji: '☕' },
+  { name: 'Латте', emoji: '🥛' },
+  { name: 'Эспрессо', emoji: '☕' },
+  { name: 'Чай', emoji: '🍵' },
+  { name: 'Круассан', emoji: '🥐' },
+  { name: 'Чизкейк', emoji: '🍰' },
+  { name: 'Лимонад', emoji: '🍋' },
+  { name: 'Коктейль', emoji: '🍹' },
+];
+
+// ---------- Коллизии: не даём проходить сквозь стены и барную стойку ----------
+const ROOM_BOUNDS = { minX: -12.3, maxX: 12.3, minZ: -9.3, maxZ: 9.3 };
+const BAR_BOX = { minX: -4.3, maxX: 4.3, minZ: -9.0, maxZ: -7.9 };
+
+AFRAME.registerComponent('boundary-check', {
+  tick: function () {
+    const pos = this.el.object3D.position;
+    if (pos.x < ROOM_BOUNDS.minX) pos.x = ROOM_BOUNDS.minX;
+    if (pos.x > ROOM_BOUNDS.maxX) pos.x = ROOM_BOUNDS.maxX;
+    if (pos.z < ROOM_BOUNDS.minZ) pos.z = ROOM_BOUNDS.minZ;
+    if (pos.z > ROOM_BOUNDS.maxZ) pos.z = ROOM_BOUNDS.maxZ;
+    // барная стойка — не даём зайти "за стойку"
+    if (pos.x > BAR_BOX.minX && pos.x < BAR_BOX.maxX && pos.z > BAR_BOX.minZ && pos.z < BAR_BOX.maxZ) {
+      pos.z = BAR_BOX.minZ - 0.05;
+    }
+  },
+});
+
 let myName = '';
 let myColor = COLORS[0];
 let roomCode = null;
@@ -108,6 +137,9 @@ async function enterCafe(code) {
 
   buildTables();
   buildVipRooms();
+  buildWaiters();
+  document.getElementById('rig').setAttribute('boundary-check', '');
+  setupStageMusic();
 
   socket = io();
   peer = new Peer(undefined, {
@@ -275,6 +307,7 @@ function startMovementSync() {
     const rot = rig.object3D.rotation;
     const ry = (rot.y * 180) / Math.PI;
     updateVoiceVolumes(pos);
+    updateStageMusicVolume(pos);
     if (last.x === pos.x && last.z === pos.z) return;
     last = { x: pos.x, z: pos.z };
     if (socket) socket.emit('move', { x: pos.x, y: pos.y, z: pos.z, ry });
@@ -445,3 +478,166 @@ function buildVipRooms() {
     container.appendChild(table);
   });
 }
+
+// ============================================================
+// ОФИЦИАНТЫ (ходят между столиками)
+// ============================================================
+function buildWaiter(name, startPos, endPos, duration, color) {
+  const container = document.getElementById('npcWaiters');
+  const entity = document.createElement('a-entity');
+  entity.setAttribute('position', startPos);
+
+  const body = document.createElement('a-cylinder');
+  body.setAttribute('radius', '0.26');
+  body.setAttribute('height', '1.3');
+  body.setAttribute('position', '0 0.9 0');
+  body.setAttribute('color', color);
+
+  const head = document.createElement('a-sphere');
+  head.setAttribute('radius', '0.2');
+  head.setAttribute('position', '0 1.75 0');
+  head.setAttribute('color', '#e0a893');
+
+  const label = document.createElement('a-text');
+  label.setAttribute('value', name);
+  label.setAttribute('align', 'center');
+  label.setAttribute('position', '0 2.1 0');
+  label.setAttribute('color', '#fff');
+  label.setAttribute('scale', '0.55 0.55 0.55');
+
+  entity.appendChild(body);
+  entity.appendChild(head);
+  entity.appendChild(label);
+  container.appendChild(entity);
+
+  entity.setAttribute('animation__go', {
+    property: 'position',
+    to: endPos,
+    dur: duration,
+    dir: 'alternate',
+    loop: true,
+    easing: 'easeInOutSine',
+  });
+}
+
+function buildWaiters() {
+  buildWaiter('Официант', '-6 0 -4', '6 0 -4', 9000, '#1abc9c');
+  buildWaiter('Официантка', '6 0 3', '-6 0 3', 11000, '#e67e22');
+}
+
+// ============================================================
+// МУЗЫКА: фоновый эмбиент + «живая» музыка на сцене караоке
+// ============================================================
+const STAGE_POS = { x: -10, z: 8 };
+const STAGE_MAX_DISTANCE = 10;
+
+let ambientPlaying = false;
+let ambientNodes = [];
+let stageMusicGain = null;
+let stageOscillators = [];
+
+function ensureAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function toggleAmbientMusic() {
+  const ctx = ensureAudioCtx();
+  const btn = document.getElementById('musicBtn');
+  if (ambientPlaying) {
+    ambientNodes.forEach((n) => { try { n.stop && n.stop(); n.disconnect(); } catch (e) {} });
+    ambientNodes = [];
+    ambientPlaying = false;
+    btn.classList.remove('active');
+    return;
+  }
+  ambientPlaying = true;
+  btn.classList.add('active');
+  const master = ctx.createGain();
+  master.gain.value = 0.12;
+  master.connect(ctx.destination);
+  const chord = [220, 277.18, 329.63, 392]; // Am9-ish пэд
+  chord.forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.value = 0.05;
+    osc.connect(g).connect(master);
+    osc.start();
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.04 + i * 0.015;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.035;
+    lfo.connect(lfoGain).connect(g.gain);
+    lfo.start();
+    ambientNodes.push(osc, lfo, g);
+  });
+  ambientNodes.push(master);
+}
+
+function setupStageMusic() {
+  const ctx = ensureAudioCtx();
+  stageMusicGain = ctx.createGain();
+  stageMusicGain.gain.value = 0;
+  stageMusicGain.connect(ctx.destination);
+  const notes = [196, 246.94, 293.66, 392]; // G-B-D-G — «живой» мотив на сцене
+  notes.forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    osc.type = i % 2 === 0 ? 'triangle' : 'sine';
+    osc.frequency.value = freq;
+    const g = ctx.createGain();
+    g.gain.value = 0.4;
+    osc.connect(g).connect(stageMusicGain);
+    osc.start();
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 0.15 + i * 0.05;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.25;
+    lfo.connect(lfoGain).connect(g.gain);
+    lfo.start();
+    stageOscillators.push(osc, lfo, g);
+  });
+}
+
+function updateStageMusicVolume(myPos) {
+  if (!stageMusicGain) return;
+  const dx = myPos.x - STAGE_POS.x, dz = myPos.z - STAGE_POS.z;
+  const dist = Math.sqrt(dx * dx + dz * dz);
+  const vol = Math.max(0, 1 - dist / STAGE_MAX_DISTANCE) * 0.25;
+  stageMusicGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.2);
+}
+
+document.getElementById('musicBtn').addEventListener('click', toggleAmbientMusic);
+
+// ============================================================
+// МЕНЮ ЗАКАЗА
+// ============================================================
+function buildOrderMenu() {
+  const wrap = document.getElementById('menuItems');
+  MENU_ITEMS.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'menu-item';
+    row.innerHTML = `<span>${item.emoji} ${item.name}</span>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Заказать';
+    btn.className = 'secondary';
+    btn.addEventListener('click', () => {
+      if (socket) socket.emit('chat', { text: `заказал(а) ${item.emoji} ${item.name} — бармен уже готовит!` });
+      const status = document.getElementById('orderStatus');
+      status.textContent = `✅ Заказ «${item.name}» отправлен бармену`;
+      status.className = 'status ok';
+    });
+    row.appendChild(btn);
+    wrap.appendChild(row);
+  });
+}
+buildOrderMenu();
+
+document.getElementById('menuBtn').addEventListener('click', () => {
+  document.getElementById('orderPanel').classList.remove('hidden');
+  document.getElementById('orderStatus').textContent = '';
+});
+document.getElementById('orderCancelBtn').addEventListener('click', () => {
+  document.getElementById('orderPanel').classList.add('hidden');
+});
