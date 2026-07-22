@@ -122,8 +122,8 @@
     <a-text value="🎤 КАРАОКЕ" position="-10 2.4 8" align="center" color="#f1c40f" scale="1.5 1.5 1.5"></a-text>
 
     <!-- Игрок (камера) -->
-    <a-entity id="rig" position="0 1.6 6" movement-controls="fly:false; speed:0.14">
-      <a-camera id="camera" look-controls="pointerLockEnabled:true" wasd-controls="acceleration:60">
+    <a-entity id="rig" position="0 1.6 6" wasd-controls="acceleration:60; fly:false">
+      <a-camera id="camera" look-controls="pointerLockEnabled:true">
         <a-cursor></a-cursor>
       </a-camera>
     </a-entity>
