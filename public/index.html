@@ -78,6 +78,21 @@
   <div id="voiceControls" class="hud voice-controls hidden">
     <button id="muteBtn">🎙️</button>
     <span id="micStatus">Микрофон включён</span>
+    <button id="musicBtn" title="Включить/выключить музыку">🎵</button>
+    <button id="menuBtn" title="Меню бара">📋 Меню</button>
+  </div>
+
+  <!-- Меню заказа -->
+  <div id="orderPanel" class="modal hidden">
+    <div class="modal-box">
+      <h3>☕ Меню бара</h3>
+      <p class="menu-hint">Выберите — заказ увидят все в комнате, бармен «примет» его в чате.</p>
+      <div id="menuItems" class="menu-items"></div>
+      <div class="modal-actions">
+        <button id="orderCancelBtn" class="secondary">Закрыть</button>
+      </div>
+      <p id="orderStatus" class="status"></p>
+    </div>
   </div>
 
   <div id="controlsHint" class="hud hint hidden">WASD — идти · мышь — оглядеться · Enter — чат</div>
@@ -105,8 +120,10 @@
     <!-- Барная стойка -->
     <a-box position="0 0.6 -8.5" width="8" height="1.2" depth="1" color="#5c3d2e"></a-box>
     <a-box position="0 1.3 -8.5" width="8" height="0.1" depth="1.1" color="#caa06a"></a-box>
-    <a-entity id="npcBarman" position="0 1 -9.3" geometry="primitive: box; width:0.5; height:1.7; depth:0.3" material="color:#c0392b">
-      <a-text value="Бармен" align="center" position="0 1.2 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
+    <a-entity id="npcBarman" position="0 0 -9.3">
+      <a-cylinder radius="0.28" height="1.3" position="0 0.9 0" color="#c0392b"></a-cylinder>
+      <a-sphere radius="0.22" position="0 1.75 0" color="#e0a893"></a-sphere>
+      <a-text value="Бармен" align="center" position="0 2.15 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
     </a-entity>
 
     <!-- Столики (3 обычных зала) -->
@@ -117,10 +134,15 @@
 
     <!-- Сцена караоке -->
     <a-box position="-10 0.3 8" width="5" height="0.6" depth="3" color="#4b2e2e"></a-box>
-    <a-entity id="npcSinger" position="-10 1 8" geometry="primitive: box; width:0.5; height:1.7; depth:0.3" material="color:#f1c40f">
-      <a-text value="Певец" align="center" position="0 1.2 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
+    <a-entity id="npcSinger" position="-10 0 8">
+      <a-cylinder radius="0.28" height="1.3" position="0 0.9 0" color="#f1c40f"></a-cylinder>
+      <a-sphere radius="0.22" position="0 1.75 0" color="#e0a893"></a-sphere>
+      <a-text value="Певец" align="center" position="0 2.15 0" color="#fff" scale="0.6 0.6 0.6"></a-text>
     </a-entity>
     <a-text value="🎤 КАРАОКЕ" position="-10 2.4 8" align="center" color="#f1c40f" scale="1.5 1.5 1.5"></a-text>
+
+    <!-- Официанты (добавляются и анимируются через JS) -->
+    <a-entity id="npcWaiters"></a-entity>
 
     <!-- Игрок (камера) -->
     <a-entity id="rig" position="0 1.6 6" wasd-controls="acceleration:60; fly:false">
