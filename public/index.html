@@ -85,7 +85,24 @@
     <span id="micStatus">Микрофон включён</span>
     <button id="musicBtn" title="Выбрать музыку">🎵</button>
     <button id="menuBtn" title="Меню бара">📋 Меню</button>
+    <button id="buildBtn" title="Строить интерьер">🔨 Строить</button>
   </div>
+
+  <!-- Каталог построек -->
+  <div id="buildPanel" class="modal hidden">
+    <div class="modal-box build-box">
+      <h3>🔨 Строительство</h3>
+      <p class="menu-hint">Выбери элемент — потом кликай в кафе, чтобы поставить. R — повернуть, Esc — выйти.</p>
+      <div class="build-tabs" id="buildTabs"></div>
+      <div id="buildVariants" class="menu-items"></div>
+      <div class="modal-actions">
+        <button id="buildRemoveModeBtn" class="secondary">🗑 Режим удаления</button>
+        <button id="buildCancelBtn" class="secondary">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="buildHint" class="hud build-hint hidden"></div>
 
   <!-- Позы/жесты -->
   <div id="emotesBar" class="hud emotes-bar hidden">
@@ -100,6 +117,10 @@
     <div class="modal-box">
       <h3>🎵 Музыка в кафе</h3>
       <p class="menu-hint">Играет для всех в комнате (общий плейлист кафе).</p>
+      <label class="opt-out-row">
+        <input type="checkbox" id="musicOptOut" />
+        Не хочу слушать музыку в этой комнате
+      </label>
       <div id="trackList" class="menu-items"></div>
       <div class="modal-actions">
         <button id="stopMusicBtn" class="secondary">⏹ Остановить</button>
@@ -174,13 +195,16 @@
 
     <!-- Игрок (камера) -->
     <a-entity id="rig" position="0 1.6 6" wasd-controls="acceleration:60; fly:false">
-      <a-camera id="camera" look-controls="pointerLockEnabled:true">
+      <a-camera id="camera" camera="userHeight: 0" look-controls="pointerLockEnabled:true">
         <a-cursor></a-cursor>
       </a-camera>
     </a-entity>
 
     <!-- Остальные гости добавляются сюда динамически -->
     <a-entity id="otherPlayers"></a-entity>
+
+    <!-- Постройки игроков (стены/пол/мебель, которые можно добавлять и убирать) -->
+    <a-entity id="builtObjects"></a-entity>
   </a-scene>
 
   <audio id="bgAudio" loop style="display:none"></audio>
