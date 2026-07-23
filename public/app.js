@@ -263,6 +263,8 @@ async function enterCafe(code) {
   });
 
   registerSocketHandlers();
+  registerBuildSocketHandlers();
+  registerMusicSocketHandlers();
   startMovementSync();
 }
 
@@ -758,9 +760,11 @@ async function openMusicPanel() {
       row.className = 'menu-item';
       row.innerHTML = `<span>🎵 ${file.replace(/\.[^.]+$/, '')}</span>`;
       const btn = document.createElement('button');
-      btn.textContent = 'Включить';
+      btn.textContent = 'Включить для всех';
       btn.className = 'secondary';
-      btn.addEventListener('click', () => playTrack(file));
+      btn.addEventListener('click', () => {
+        if (socket) socket.emit('music-play', { file });
+      });
       row.appendChild(btn);
       list.appendChild(row);
     });
@@ -769,27 +773,55 @@ async function openMusicPanel() {
   }
 }
 
-function playTrack(file) {
-  bgAudio.src = `/music/${encodeURIComponent(file)}`;
-  bgAudio.play().catch(() => {});
-  document.getElementById('musicStatus').textContent = `▶️ Играет: ${file}`;
+let musicOptOut = false;
+let lastMusicState = null; // последнее состояние музыки в комнате (для галочки-переключателя)
+
+// Применяем то, что реально играет в комнате (пришло с сервера — общее для всех)
+function applyMusicPlay(data, syncOffset) {
+  lastMusicState = data;
+  document.getElementById('musicStatus').textContent = `▶️ Играет: ${data.file}`;
   document.getElementById('musicStatus').className = 'status ok';
   document.getElementById('musicBtn').classList.add('active');
+  if (musicOptOut) return; // сам себе выключил — не проигрываем
+  bgAudio.src = `/music/${encodeURIComponent(data.file)}`;
+  bgAudio.currentTime = 0;
+  bgAudio.play().then(() => {
+    if (syncOffset) {
+      const offset = (Date.now() - data.startedAt) / 1000;
+      if (offset > 0 && bgAudio.duration && offset < bgAudio.duration) bgAudio.currentTime = offset;
+    }
+  }).catch(() => {});
 }
 
-function stopTrack() {
+function applyMusicStop() {
+  lastMusicState = null;
   bgAudio.pause();
-  bgAudio.removeAttribute('src');
   document.getElementById('musicBtn').classList.remove('active');
   document.getElementById('musicStatus').textContent = 'Остановлено';
   document.getElementById('musicStatus').className = 'status';
 }
 
+document.getElementById('musicOptOut').addEventListener('change', (e) => {
+  musicOptOut = e.target.checked;
+  if (musicOptOut) {
+    bgAudio.pause();
+  } else if (lastMusicState) {
+    applyMusicPlay(lastMusicState, true);
+  }
+});
+
 document.getElementById('musicBtn').addEventListener('click', openMusicPanel);
-document.getElementById('stopMusicBtn').addEventListener('click', stopTrack);
+document.getElementById('stopMusicBtn').addEventListener('click', () => {
+  if (socket) socket.emit('music-stop');
+});
 document.getElementById('musicCancelBtn').addEventListener('click', () => {
   document.getElementById('musicPanel').classList.add('hidden');
 });
+
+function registerMusicSocketHandlers() {
+  socket.on('music-play', (data) => applyMusicPlay(data, true));
+  socket.on('music-stop', () => applyMusicStop());
+}
 
 // ============================================================
 // МЕНЮ ЗАКАЗА (+ всплывающее уведомление над баром для всех)
@@ -849,4 +881,318 @@ function spawnOrderNotice(name, emoji, item) {
     easing: 'easeInQuad',
   });
   setTimeout(() => { if (text.parentNode) text.parentNode.removeChild(text); }, 3600);
+}
+
+// ============================================================
+// СТРОИТЕЛЬСТВО ИНТЕРЬЕРА (стены/пол/перегородки/мебель)
+// ============================================================
+const CATEGORY_DEFS = {
+  wall: {
+    label: 'Стена',
+    variants: {
+      brown: { label: 'Тёмная', color: '#5a4132' },
+      cream: { label: 'Светлая', color: '#cfc9c2' },
+    },
+    grid: 1,
+    build: (variant) => {
+      const el = document.createElement('a-box');
+      el.setAttribute('width', 2);
+      el.setAttribute('height', 2.5);
+      el.setAttribute('depth', 0.15);
+      el.setAttribute('color', CATEGORY_DEFS.wall.variants[variant].color);
+      el.setAttribute('position', '0 1.25 0');
+      return el;
+    },
+  },
+  floor: {
+    label: 'Пол',
+    variants: {
+      light: { label: 'Светлый', color: '#8a6b4d' },
+      dark: { label: 'Тёмный', color: '#4a3527' },
+    },
+    grid: 1,
+    build: (variant) => {
+      const el = document.createElement('a-plane');
+      el.setAttribute('width', 1);
+      el.setAttribute('height', 1);
+      el.setAttribute('rotation', '-90 0 0');
+      el.setAttribute('color', CATEGORY_DEFS.floor.variants[variant].color);
+      el.setAttribute('position', '0 0.02 0');
+      return el;
+    },
+  },
+  partition: {
+    label: 'Перегородка',
+    variants: { wood: { label: 'Дерево', color: '#6b4f3d' } },
+    grid: 1,
+    build: () => {
+      const el = document.createElement('a-box');
+      el.setAttribute('width', 1.2);
+      el.setAttribute('height', 1.3);
+      el.setAttribute('depth', 0.1);
+      el.setAttribute('color', '#6b4f3d');
+      el.setAttribute('position', '0 0.65 0');
+      return el;
+    },
+  },
+  table: {
+    label: 'Стол',
+    variants: { round: { label: 'Круглый' } },
+    grid: 0.5,
+    build: () => {
+      const wrap = document.createElement('a-entity');
+      const top = document.createElement('a-cylinder');
+      top.setAttribute('radius', '0.55');
+      top.setAttribute('height', '0.06');
+      top.setAttribute('color', '#7a5a3d');
+      top.setAttribute('position', '0 0.45 0');
+      const leg = document.createElement('a-cylinder');
+      leg.setAttribute('radius', '0.06');
+      leg.setAttribute('height', '0.45');
+      leg.setAttribute('color', '#3a2b22');
+      leg.setAttribute('position', '0 0.22 0');
+      wrap.appendChild(top);
+      wrap.appendChild(leg);
+      return wrap;
+    },
+  },
+  chair: {
+    label: 'Стул',
+    variants: { basic: { label: 'Обычный', color: '#8a4b32' } },
+    grid: 0.5,
+    build: (variant) => {
+      const el = document.createElement('a-box');
+      el.setAttribute('width', '0.4');
+      el.setAttribute('height', '0.4');
+      el.setAttribute('depth', '0.4');
+      el.setAttribute('color', CATEGORY_DEFS.chair.variants[variant].color);
+      el.setAttribute('position', '0 0.2 0');
+      return el;
+    },
+  },
+  bar: {
+    label: 'Барная стойка',
+    variants: { basic: { label: 'Секция' } },
+    grid: 1,
+    build: () => {
+      const wrap = document.createElement('a-entity');
+      const base = document.createElement('a-box');
+      base.setAttribute('width', '1');
+      base.setAttribute('height', '1.2');
+      base.setAttribute('depth', '0.6');
+      base.setAttribute('color', '#5c3d2e');
+      base.setAttribute('position', '0 0.6 0');
+      const top = document.createElement('a-box');
+      top.setAttribute('width', '1.05');
+      top.setAttribute('height', '0.08');
+      top.setAttribute('depth', '0.65');
+      top.setAttribute('color', '#caa06a');
+      top.setAttribute('position', '0 1.24 0');
+      wrap.appendChild(base);
+      wrap.appendChild(top);
+      return wrap;
+    },
+  },
+};
+
+const builtEntities = {}; // id -> a-entity (wrapper)
+let currentBuildItem = null; // { category, variant }
+let buildRotation = 0;
+let isPlacementMode = false;
+let isRemoveMode = false;
+let ghostEntity = null;
+
+function renderBuiltObject(obj) {
+  if (builtEntities[obj.id]) return;
+  const def = CATEGORY_DEFS[obj.category];
+  if (!def) return;
+  const wrapper = document.createElement('a-entity');
+  wrapper.setAttribute('position', `${obj.x} 0 ${obj.z}`);
+  wrapper.setAttribute('rotation', `0 ${obj.ry || 0} 0`);
+  const built = def.build(obj.variant);
+  wrapper.appendChild(built);
+  document.getElementById('builtObjects').appendChild(wrapper);
+  wrapper.object3D.userData.buildId = obj.id;
+  builtEntities[obj.id] = wrapper;
+}
+
+function removeBuiltObject(id) {
+  const el = builtEntities[id];
+  if (el && el.parentNode) el.parentNode.removeChild(el);
+  delete builtEntities[id];
+}
+
+// ---------- UI каталога ----------
+function buildCatalogUI() {
+  const tabsWrap = document.getElementById('buildTabs');
+  const variantsWrap = document.getElementById('buildVariants');
+
+  function renderVariants(catKey) {
+    variantsWrap.innerHTML = '';
+    const def = CATEGORY_DEFS[catKey];
+    Object.entries(def.variants).forEach(([varKey, v]) => {
+      const row = document.createElement('div');
+      row.className = 'menu-item';
+      row.innerHTML = `<span>${v.label || varKey}</span>`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Выбрать';
+      btn.className = 'secondary';
+      btn.addEventListener('click', () => {
+        currentBuildItem = { category: catKey, variant: varKey };
+        isPlacementMode = true;
+        isRemoveMode = false;
+        document.getElementById('buildPanel').classList.add('hidden');
+        showBuildHint();
+      });
+      row.appendChild(btn);
+      variantsWrap.appendChild(row);
+    });
+  }
+
+  Object.entries(CATEGORY_DEFS).forEach(([key, def], i) => {
+    const tab = document.createElement('button');
+    tab.textContent = def.label;
+    if (i === 0) tab.classList.add('active');
+    tab.addEventListener('click', () => {
+      tabsWrap.querySelectorAll('button').forEach((b) => b.classList.remove('active'));
+      tab.classList.add('active');
+      renderVariants(key);
+    });
+    tabsWrap.appendChild(tab);
+  });
+  renderVariants(Object.keys(CATEGORY_DEFS)[0]);
+}
+buildCatalogUI();
+
+document.getElementById('buildBtn').addEventListener('click', () => {
+  document.getElementById('buildPanel').classList.remove('hidden');
+});
+document.getElementById('buildCancelBtn').addEventListener('click', () => {
+  document.getElementById('buildPanel').classList.add('hidden');
+});
+document.getElementById('buildRemoveModeBtn').addEventListener('click', () => {
+  isRemoveMode = true;
+  isPlacementMode = false;
+  currentBuildItem = null;
+  document.getElementById('buildPanel').classList.add('hidden');
+  showBuildHint();
+});
+
+function showBuildHint() {
+  const hint = document.getElementById('buildHint');
+  hint.classList.remove('hidden');
+  hint.textContent = isRemoveMode
+    ? '🗑 Режим удаления — клик по объекту убирает его. Esc — выйти'
+    : '🔨 Клик — поставить, R — повернуть, Esc — выйти';
+}
+function hideBuildHint() {
+  document.getElementById('buildHint').classList.add('hidden');
+}
+
+function exitBuildMode() {
+  isPlacementMode = false;
+  isRemoveMode = false;
+  currentBuildItem = null;
+  if (ghostEntity && ghostEntity.parentNode) ghostEntity.parentNode.removeChild(ghostEntity);
+  ghostEntity = null;
+  hideBuildHint();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') exitBuildMode();
+  if (e.key.toLowerCase() === 'r' && isPlacementMode) {
+    buildRotation = (buildRotation + 90) % 360;
+  }
+});
+
+// ---------- Определение точки на полу по направлению камеры ----------
+function getGroundPointFromCamera(maxDist = 15) {
+  const camEl = document.getElementById('camera');
+  if (!camEl || !camEl.object3D) return null;
+  const camera = camEl.getObject3D('camera') || camEl.object3D;
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const origin = new THREE.Vector3();
+  camera.getWorldPosition(origin);
+  if (dir.y >= -0.001) return null;
+  const t = -origin.y / dir.y;
+  if (t < 0 || t > maxDist) return null;
+  return { x: origin.x + dir.x * t, z: origin.z + dir.z * t };
+}
+
+function snap(val, grid) {
+  return Math.round(val / grid) * grid;
+}
+
+// ---------- Тик: обновляем призрак-превью ----------
+AFRAME.registerComponent('build-ticker', {
+  tick: function () {
+    if (!isPlacementMode || !currentBuildItem) {
+      if (ghostEntity && ghostEntity.parentNode) {
+        ghostEntity.parentNode.removeChild(ghostEntity);
+        ghostEntity = null;
+      }
+      return;
+    }
+    const point = getGroundPointFromCamera();
+    if (!point) return;
+    const def = CATEGORY_DEFS[currentBuildItem.category];
+    const gx = snap(point.x, def.grid);
+    const gz = snap(point.z, def.grid);
+
+    if (!ghostEntity) {
+      ghostEntity = document.createElement('a-entity');
+      ghostEntity.setAttribute('material', 'opacity: 0.5; transparent: true');
+      const built = def.build(currentBuildItem.variant);
+      built.setAttribute('material', 'opacity: 0.5; transparent: true');
+      ghostEntity.appendChild(built);
+      document.getElementById('builtObjects').appendChild(ghostEntity);
+    }
+    ghostEntity.setAttribute('position', `${gx} 0 ${gz}`);
+    ghostEntity.setAttribute('rotation', `0 ${buildRotation} 0`);
+  },
+});
+document.querySelector('a-scene').setAttribute('build-ticker', '');
+
+// ---------- Клик: поставить / удалить ----------
+document.addEventListener('click', (e) => {
+  if (e.target.tagName !== 'CANVAS') return; // клики по UI-панелям не считаем
+
+  if (isPlacementMode && currentBuildItem) {
+    const point = getGroundPointFromCamera();
+    if (!point) return;
+    const def = CATEGORY_DEFS[currentBuildItem.category];
+    const gx = snap(point.x, def.grid);
+    const gz = snap(point.z, def.grid);
+    if (socket) {
+      socket.emit('build-place', {
+        category: currentBuildItem.category,
+        variant: currentBuildItem.variant,
+        x: gx, z: gz, ry: buildRotation,
+      });
+    }
+  } else if (isRemoveMode) {
+    const camEl = document.getElementById('camera');
+    const camera = camEl.getObject3D('camera');
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    const container = document.getElementById('builtObjects').object3D;
+    const hits = raycaster.intersectObject(container, true);
+    if (hits.length) {
+      let obj = hits[0].object;
+      while (obj && !obj.userData.buildId) obj = obj.parent;
+      if (obj && obj.userData.buildId && socket) {
+        socket.emit('build-remove', { id: obj.userData.buildId });
+      }
+    }
+  }
+});
+
+// ---------- Синхронизация с сервером ----------
+function registerBuildSocketHandlers() {
+  socket.on('room-layout', (layout) => {
+    (layout || []).forEach(renderBuiltObject);
+  });
+  socket.on('build-place', (item) => renderBuiltObject(item));
+  socket.on('build-remove', ({ id }) => removeBuiltObject(id));
 }
