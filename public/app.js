@@ -182,6 +182,18 @@ tabJoin.addEventListener('click', () => {
   paneCreate.classList.add('hidden');
 });
 
+function showVoiceWarning(text) {
+  let box = document.getElementById('voiceWarning');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'voiceWarning';
+    box.className = 'voice-warning';
+    document.body.appendChild(box);
+  }
+  box.textContent = text;
+  box.classList.remove('hidden');
+}
+
 function showError(msg) {
   const el = document.getElementById('landingError');
   el.textContent = msg;
@@ -226,6 +238,7 @@ async function enterCafe(code) {
   } catch (e) {
     console.warn('Микрофон недоступен, продолжаем без голоса:', e.message);
     localStream = null;
+    showVoiceWarning(`⚠️ Микрофон недоступен (${e.name || e.message}) — голос работать не будет, пока не разрешишь доступ в настройках браузера`);
   }
 
   document.getElementById('landing').classList.add('hidden');
@@ -260,6 +273,19 @@ async function enterCafe(code) {
   peer.on('call', (call) => {
     call.answer(localStream || undefined);
     call.on('stream', (remoteStream) => attachRemoteAudio(call.peer, remoteStream));
+  });
+
+  peer.on('error', (err) => {
+    console.error('PeerJS ошибка:', err.type, err.message);
+    showVoiceWarning(`⚠️ Голосовое соединение: ошибка (${err.type}) — попробуй перезайти в комнату`);
+  });
+  peer.on('disconnected', () => {
+    showVoiceWarning('⚠️ Голосовой сервер отключился — попробуй перезайти в комнату');
+  });
+
+  socket.on('connect_error', (err) => {
+    console.error('Socket.io ошибка подключения:', err.message);
+    showVoiceWarning('⚠️ Проблема с подключением к серверу комнаты — обнови страницу');
   });
 
   registerSocketHandlers();
