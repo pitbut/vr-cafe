@@ -101,11 +101,13 @@ if (prefilledRoom) {
 }
 
 document.getElementById('createBtn').addEventListener('click', () => {
+  ensureAudioCtx();
   myName = document.getElementById('nameInput').value.trim() || 'Гость';
   enterCafe(generateRoomCode());
 });
 
 document.getElementById('joinBtn').addEventListener('click', () => {
+  ensureAudioCtx();
   myName = document.getElementById('nameInput').value.trim() || 'Гость';
   const code = document.getElementById('joinCodeInput').value.trim().toUpperCase();
   if (!code) return showError('Введите код комнаты');
@@ -538,6 +540,7 @@ let stageOscillators = [];
 
 function ensureAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
 }
 
