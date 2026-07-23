@@ -295,3 +295,7 @@ button.secondary {
 .status.err { color: #ff8a80; }
 
 a-scene { width: 100vw; height: 100vh; }
+
+/* A-Frame рисует свою кнопку "Enter VR/Fullscreen" поверх интерфейса даже при
+   vr-mode-ui enabled:false — прячем её, чтобы не перехватывала клики по нашим кнопкам */
+.a-enter-vr { display: none !important; }
