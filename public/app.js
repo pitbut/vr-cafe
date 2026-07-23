@@ -45,6 +45,23 @@ let muted = false;
 
 // remoteId(socket.id) -> { entity, audioEl, gainNode, x,y,z }
 const peers = {};
+const calledPeers = new Set(); // чтобы не звонить одному и тому же дважды
+
+// Следим за реальным состоянием WebRTC-соединения — сигнализация может пройти
+// успешно (нет ошибок), а медиапоток всё равно не установится из-за NAT/файрвола
+function monitorCallConnection(call, peerId) {
+  const check = () => {
+    const pc = call.peerConnection;
+    if (!pc) return;
+    pc.oniceconnectionstatechange = () => {
+      console.log(`ICE-статус (${peerId}):`, pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        showVoiceWarning(`⚠️ Не удалось установить голосовое соединение с одним из гостей (сеть/файрвол блокирует прямое соединение). Попробуй другую сеть или мобильный интернет.`);
+      }
+    };
+  };
+  setTimeout(check, 300);
+}
 
 // ---------- Генерация UI: выбор цвета ----------
 function buildColorPicker() {
@@ -272,7 +289,11 @@ async function enterCafe(code) {
 
   peer.on('call', (call) => {
     call.answer(localStream || undefined);
-    call.on('stream', (remoteStream) => attachRemoteAudio(call.peer, remoteStream));
+    call.on('stream', (remoteStream) => {
+      console.log('✅ Получен голосовой поток от', call.peer);
+      attachRemoteAudio(call.peer, remoteStream);
+    });
+    monitorCallConnection(call, call.peer);
   });
 
   peer.on('error', (err) => {
@@ -300,7 +321,19 @@ async function enterCafe(code) {
 function registerSocketHandlers() {
   socket.on('room-users', (users) => {
     Object.entries(users).forEach(([id, u]) => {
-      if (id !== socket.id) addRemotePlayer(id, u);
+      if (id !== socket.id) {
+        addRemotePlayer(id, u);
+        // Звоним и мы тоже — на случай если звонок в обратную сторону не пройдёт (NAT)
+        if (peer && u.peerId && localStream && !calledPeers.has(id)) {
+          calledPeers.add(id);
+          const call = peer.call(u.peerId, localStream);
+          call.on('stream', (remoteStream) => {
+            console.log('✅ Получен голосовой поток от', id);
+            attachRemoteAudio(id, remoteStream);
+          });
+          monitorCallConnection(call, id);
+        }
+      }
     });
     refreshUserList();
   });
@@ -309,9 +342,14 @@ function registerSocketHandlers() {
     addRemotePlayer(u.id, u);
     refreshUserList();
     // звоним новому гостю голосом
-    if (peer && u.peerId && localStream) {
+    if (peer && u.peerId && localStream && !calledPeers.has(u.id)) {
+      calledPeers.add(u.id);
       const call = peer.call(u.peerId, localStream);
-      call.on('stream', (remoteStream) => attachRemoteAudio(u.id, remoteStream));
+      call.on('stream', (remoteStream) => {
+        console.log('✅ Получен голосовой поток от', u.id);
+        attachRemoteAudio(u.id, remoteStream);
+      });
+      monitorCallConnection(call, u.id);
     }
     addChatLine('Система', `${u.name} зашёл(шла) в кафе`);
   });
