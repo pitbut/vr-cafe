@@ -30,7 +30,7 @@ function roomUserCount(roomCode) {
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join-room', ({ roomCode, name, color, peerId }) => {
+  socket.on('join-room', ({ roomCode, name, color, peerId, avatarFile }) => {
     if (!roomCode || !peerId) return;
     currentRoom = roomCode;
     socket.join(roomCode);
@@ -39,6 +39,7 @@ io.on('connection', (socket) => {
     rooms[roomCode][socket.id] = {
       name: (name || 'Гость').slice(0, 24),
       color: color || '#4FC3F7',
+      avatarFile: avatarFile ? String(avatarFile).slice(0, 100) : null,
       peerId,
       x: 0, y: 0, z: 0, ry: 0,
     };
@@ -127,6 +128,19 @@ app.post('/api/invite', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true, rooms: Object.keys(rooms).length }));
+
+app.get('/api/avatars', (req, res) => {
+  const modelsDir = path.join(__dirname, 'public', 'models');
+  try {
+    if (!fs.existsSync(modelsDir)) return res.json({ avatars: [] });
+    const files = fs
+      .readdirSync(modelsDir)
+      .filter((f) => /\.(glb|gltf)$/i.test(f));
+    res.json({ avatars: files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.get('/api/tracks', (req, res) => {
   const musicDir = path.join(__dirname, 'public', 'music');
