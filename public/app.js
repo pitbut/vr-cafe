@@ -86,19 +86,32 @@ document.getElementById('avatarSelect').addEventListener('change', (e) => {
   myAvatarFile = e.target.value;
 });
 
-// Проигрывает встроенные в GLB-модель анимации (ходьба/стойка), без внешних библиотек
+// Проигрывает анимации из GLB-модели и плавно переключается idle <-> walk
 AFRAME.registerComponent('simple-gltf-anim', {
   init: function () {
     this.mixer = null;
+    this.idleAction = null;
+    this.walkAction = null;
+    this.current = null;
     this.el.addEventListener('model-loaded', (e) => {
       const model = e.detail.model;
-      const clips = model.animations;
-      if (clips && clips.length) {
-        this.mixer = new THREE.AnimationMixer(model);
-        const clip = clips.find((c) => /walk|idle/i.test(c.name)) || clips[0];
-        this.mixer.clipAction(clip).play();
-      }
+      const clips = model.animations || [];
+      if (!clips.length) return;
+      this.mixer = new THREE.AnimationMixer(model);
+      const idleClip = clips.find((c) => /idle|stand|breath/i.test(c.name));
+      const walkClip = clips.find((c) => /walk|run|move/i.test(c.name));
+      this.idleAction = this.mixer.clipAction(idleClip || clips[0]);
+      this.walkAction = walkClip ? this.mixer.clipAction(walkClip) : this.idleAction;
+      this.idleAction.play();
+      this.current = this.idleAction;
     });
+  },
+  setMoving: function (moving) {
+    const target = moving ? this.walkAction : this.idleAction;
+    if (!target || this.current === target) return;
+    target.reset().fadeIn(0.25).play();
+    if (this.current) this.current.fadeOut(0.25);
+    this.current = target;
   },
   tick: function (t, dt) {
     if (this.mixer) this.mixer.update(dt / 1000);
@@ -232,10 +245,20 @@ function registerSocketHandlers() {
   socket.on('user-moved', ({ id, x, y, z, ry }) => {
     const p = peers[id];
     if (!p) return;
+    const dx = x - p.x, dz = z - p.z;
+    const moved = Math.sqrt(dx * dx + dz * dz) > 0.01;
     p.x = x; p.z = z;
     if (p.entity) {
       p.entity.setAttribute('position', `${x} 0 ${z}`);
       if (typeof ry === 'number') p.entity.setAttribute('rotation', `0 ${ry} 0`);
+    }
+    if (p.modelEl && p.modelEl.components['simple-gltf-anim']) {
+      const anim = p.modelEl.components['simple-gltf-anim'];
+      if (moved) {
+        anim.setMoving(true);
+        clearTimeout(p.idleTimer);
+        p.idleTimer = setTimeout(() => anim.setMoving(false), 400);
+      }
     }
   });
 
@@ -263,12 +286,13 @@ function addRemotePlayer(id, u) {
   // иначе аватар "парит" в воздухе.
   entity.setAttribute('position', `${u.x || 0} 0 ${u.z || 0}`);
 
+  let modelEl = null;
   if (u.avatarFile) {
-    const model = document.createElement('a-entity');
-    model.setAttribute('gltf-model', `/models/${encodeURIComponent(u.avatarFile)}`);
-    model.setAttribute('simple-gltf-anim', '');
-    model.setAttribute('position', '0 0 0');
-    entity.appendChild(model);
+    modelEl = document.createElement('a-entity');
+    modelEl.setAttribute('gltf-model', `/models/${encodeURIComponent(u.avatarFile)}`);
+    modelEl.setAttribute('simple-gltf-anim', '');
+    modelEl.setAttribute('position', '0 0 0');
+    entity.appendChild(modelEl);
   } else {
     const body = document.createElement('a-cylinder');
     body.setAttribute('radius', '0.28');
@@ -296,7 +320,18 @@ function addRemotePlayer(id, u) {
 
   container.appendChild(entity);
 
-  peers[id] = { entity, audioEl: null, gainNode: null, x: u.x || 0, y: 0, z: u.z || 0, name: u.name, color: u.color };
+  peers[id] = {
+    entity,
+    modelEl,
+    audioEl: null,
+    gainNode: null,
+    x: u.x || 0,
+    y: 0,
+    z: u.z || 0,
+    name: u.name,
+    color: u.color,
+    idleTimer: null,
+  };
 }
 
 function removeRemotePlayer(id) {
@@ -304,6 +339,7 @@ function removeRemotePlayer(id) {
   if (!p) return;
   if (p.entity && p.entity.parentNode) p.entity.parentNode.removeChild(p.entity);
   if (p.audioEl) p.audioEl.remove();
+  clearTimeout(p.idleTimer);
   delete peers[id];
 }
 
