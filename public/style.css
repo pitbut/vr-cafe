@@ -276,7 +276,48 @@ button.secondary {
 .emotes-bar button:hover { background: var(--accent); }
 .emotes-bar button.stand-btn { background: transparent; border: 1px solid rgba(255,255,255,0.2); }
 
+.build-box { width: 400px; }
+.build-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.build-tabs button {
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: var(--bg-espresso);
+  color: var(--cream);
+  cursor: pointer;
+}
+.build-tabs button.active { background: var(--accent); color: #1c1410; border-color: var(--accent); }
+
+.build-hint {
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #fff;
+  background: rgba(0,0,0,0.55);
+  padding: 8px 16px;
+  border-radius: 20px;
+  pointer-events: none;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .menu-hint { font-size: 12px; color: var(--muted); margin: 4px 0 14px; }
+.opt-out-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--cream);
+  margin-bottom: 14px;
+  cursor: pointer;
+}
+.opt-out-row input { width: 16px; height: 16px; }
 .menu-items { display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; }
 .menu-item {
   display: flex;
