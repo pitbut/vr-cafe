@@ -8,11 +8,15 @@
     "dev": "node server.js"
   },
   "dependencies": {
+    "aframe": "^1.5.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
+    "mongodb": "^7.5.0",
     "node-fetch": "^2.7.0",
     "peer": "^1.0.2",
-    "socket.io": "^4.7.5"
+    "peerjs": "^1.5.4",
+    "socket.io": "^4.7.5",
+    "socket.io-client": "^4.7.5"
   }
 }
