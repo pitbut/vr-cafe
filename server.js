@@ -246,6 +246,32 @@ app.post('/api/invite', async (req, res) => {
 
 app.get('/api/health', (req, res) => res.json({ ok: true, rooms: Object.keys(rooms).length }));
 
+// TURN-сервер для голоса за строгими NAT/файрволами (Metered.ca, бесплатно до 20ГБ/мес)
+app.get('/api/turn-credentials', async (req, res) => {
+  const appName = process.env.METERED_APP_NAME;
+  const apiKey = process.env.METERED_API_KEY;
+
+  // Резервный набор — те же TURN-сервера, что по умолчанию использует сама библиотека
+  // PeerJS (turn.peerjs.com), плюс публичные STUN. Используется, пока не настроен Metered.
+  const fallback = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'turn:eu-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
+    { urls: 'turn:us-0.turn.peerjs.com:3478', username: 'peerjs', credential: 'peerjsp' },
+  ];
+
+  if (!appName || !apiKey) {
+    return res.json(fallback);
+  }
+  try {
+    const r = await fetch(`https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`);
+    const iceServers = await r.json();
+    res.json(iceServers);
+  } catch (err) {
+    console.error('Ошибка получения TURN-данных:', err.message);
+    res.json(fallback);
+  }
+});
+
 app.get('/api/avatars', (req, res) => {
   const modelsDir = path.join(__dirname, 'public', 'models');
   try {
