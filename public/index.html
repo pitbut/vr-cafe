@@ -78,8 +78,22 @@
   <div id="voiceControls" class="hud voice-controls hidden">
     <button id="muteBtn">🎙️</button>
     <span id="micStatus">Микрофон включён</span>
-    <button id="musicBtn" title="Включить/выключить музыку">🎵</button>
+    <button id="musicBtn" title="Выбрать музыку">🎵</button>
     <button id="menuBtn" title="Меню бара">📋 Меню</button>
+  </div>
+
+  <!-- Выбор музыки -->
+  <div id="musicPanel" class="modal hidden">
+    <div class="modal-box">
+      <h3>🎵 Музыка в кафе</h3>
+      <p class="menu-hint">Играет для всех в комнате (общий плейлист кафе).</p>
+      <div id="trackList" class="menu-items"></div>
+      <div class="modal-actions">
+        <button id="stopMusicBtn" class="secondary">⏹ Остановить</button>
+        <button id="musicCancelBtn" class="secondary">Закрыть</button>
+      </div>
+      <p id="musicStatus" class="status"></p>
+    </div>
   </div>
 
   <!-- Меню заказа -->
@@ -120,6 +134,7 @@
     <!-- Барная стойка -->
     <a-box position="0 0.6 -8.5" width="8" height="1.2" depth="1" color="#5c3d2e"></a-box>
     <a-box position="0 1.3 -8.5" width="8" height="0.1" depth="1.1" color="#caa06a"></a-box>
+    <a-entity id="orderNotices" position="0 2.3 -8.5"></a-entity>
     <a-entity id="npcBarman" position="0 0 -9.3">
       <a-cylinder radius="0.28" height="1.3" position="0 0.9 0" color="#c0392b"></a-cylinder>
       <a-sphere radius="0.22" position="0 1.75 0" color="#e0a893"></a-sphere>
@@ -154,6 +169,8 @@
     <!-- Остальные гости добавляются сюда динамически -->
     <a-entity id="otherPlayers"></a-entity>
   </a-scene>
+
+  <audio id="bgAudio" loop style="display:none"></audio>
 
   <script src="app.js"></script>
 </body>
