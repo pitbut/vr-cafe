@@ -78,6 +78,17 @@ input[type="text"] {
 }
 input[type="text"]:focus { border-color: var(--accent); }
 
+select#avatarSelect {
+  width: 100%;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--bg-espresso);
+  color: var(--cream);
+  font-size: 14px;
+  outline: none;
+}
+
 .color-picker { display: flex; gap: 8px; flex-wrap: wrap; }
 .color-swatch {
   width: 30px; height: 30px;
