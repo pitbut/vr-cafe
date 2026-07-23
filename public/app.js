@@ -203,6 +203,11 @@ function registerSocketHandlers() {
   });
 
   socket.on('chat', (msg) => addChatLine(msg.name, msg.text));
+
+  socket.on('order', (data) => {
+    addChatLine('☕ Бар', `${data.name} заказал(а) ${data.emoji} ${data.item} — уже готовим!`);
+    spawnOrderNotice(data.name, data.emoji, data.item);
+  });
 }
 
 // ============================================================
@@ -528,13 +533,11 @@ function buildWaiters() {
 }
 
 // ============================================================
-// МУЗЫКА: фоновый эмбиент + «живая» музыка на сцене караоке
+// МУЗЫКА: реальные треки (из public/music) + «живая» на сцене караоке
 // ============================================================
 const STAGE_POS = { x: -10, z: 8 };
 const STAGE_MAX_DISTANCE = 10;
 
-let ambientPlaying = false;
-let ambientNodes = [];
 let stageMusicGain = null;
 let stageOscillators = [];
 
@@ -542,41 +545,6 @@ function ensureAudioCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
-}
-
-function toggleAmbientMusic() {
-  const ctx = ensureAudioCtx();
-  const btn = document.getElementById('musicBtn');
-  if (ambientPlaying) {
-    ambientNodes.forEach((n) => { try { n.stop && n.stop(); n.disconnect(); } catch (e) {} });
-    ambientNodes = [];
-    ambientPlaying = false;
-    btn.classList.remove('active');
-    return;
-  }
-  ambientPlaying = true;
-  btn.classList.add('active');
-  const master = ctx.createGain();
-  master.gain.value = 0.12;
-  master.connect(ctx.destination);
-  const chord = [220, 277.18, 329.63, 392]; // Am9-ish пэд
-  chord.forEach((freq, i) => {
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    const g = ctx.createGain();
-    g.gain.value = 0.05;
-    osc.connect(g).connect(master);
-    osc.start();
-    const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.04 + i * 0.015;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.035;
-    lfo.connect(lfoGain).connect(g.gain);
-    lfo.start();
-    ambientNodes.push(osc, lfo, g);
-  });
-  ambientNodes.push(master);
 }
 
 function setupStageMusic() {
@@ -611,10 +579,67 @@ function updateStageMusicVolume(myPos) {
   stageMusicGain.gain.setTargetAtTime(vol, audioCtx.currentTime, 0.2);
 }
 
-document.getElementById('musicBtn').addEventListener('click', toggleAmbientMusic);
+// ---------- Плеер реальных треков ----------
+const bgAudio = document.getElementById('bgAudio');
+bgAudio.volume = 0.5;
+
+async function openMusicPanel() {
+  ensureAudioCtx();
+  const panel = document.getElementById('musicPanel');
+  const list = document.getElementById('trackList');
+  const status = document.getElementById('musicStatus');
+  list.innerHTML = 'Загрузка списка треков…';
+  panel.classList.remove('hidden');
+  status.textContent = '';
+
+  try {
+    const res = await fetch('/api/tracks');
+    const data = await res.json();
+    list.innerHTML = '';
+    if (!data.tracks || data.tracks.length === 0) {
+      list.innerHTML = '<p class="menu-hint">Треков пока нет — положи .mp3 файлы в папку <code>public/music</code> на сервере (см. public/music/README.md).</p>';
+      return;
+    }
+    data.tracks.forEach((file) => {
+      const row = document.createElement('div');
+      row.className = 'menu-item';
+      row.innerHTML = `<span>🎵 ${file.replace(/\.[^.]+$/, '')}</span>`;
+      const btn = document.createElement('button');
+      btn.textContent = 'Включить';
+      btn.className = 'secondary';
+      btn.addEventListener('click', () => playTrack(file));
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
+  } catch (e) {
+    list.innerHTML = '<p class="menu-hint">Не удалось получить список треков.</p>';
+  }
+}
+
+function playTrack(file) {
+  bgAudio.src = `/music/${encodeURIComponent(file)}`;
+  bgAudio.play().catch(() => {});
+  document.getElementById('musicStatus').textContent = `▶️ Играет: ${file}`;
+  document.getElementById('musicStatus').className = 'status ok';
+  document.getElementById('musicBtn').classList.add('active');
+}
+
+function stopTrack() {
+  bgAudio.pause();
+  bgAudio.removeAttribute('src');
+  document.getElementById('musicBtn').classList.remove('active');
+  document.getElementById('musicStatus').textContent = 'Остановлено';
+  document.getElementById('musicStatus').className = 'status';
+}
+
+document.getElementById('musicBtn').addEventListener('click', openMusicPanel);
+document.getElementById('stopMusicBtn').addEventListener('click', stopTrack);
+document.getElementById('musicCancelBtn').addEventListener('click', () => {
+  document.getElementById('musicPanel').classList.add('hidden');
+});
 
 // ============================================================
-// МЕНЮ ЗАКАЗА
+// МЕНЮ ЗАКАЗА (+ всплывающее уведомление над баром для всех)
 // ============================================================
 function buildOrderMenu() {
   const wrap = document.getElementById('menuItems');
@@ -626,7 +651,7 @@ function buildOrderMenu() {
     btn.textContent = 'Заказать';
     btn.className = 'secondary';
     btn.addEventListener('click', () => {
-      if (socket) socket.emit('chat', { text: `заказал(а) ${item.emoji} ${item.name} — бармен уже готовит!` });
+      if (socket) socket.emit('order', { item: item.name, emoji: item.emoji });
       const status = document.getElementById('orderStatus');
       status.textContent = `✅ Заказ «${item.name}» отправлен бармену`;
       status.className = 'status ok';
@@ -644,3 +669,31 @@ document.getElementById('menuBtn').addEventListener('click', () => {
 document.getElementById('orderCancelBtn').addEventListener('click', () => {
   document.getElementById('orderPanel').classList.add('hidden');
 });
+
+// Всплывающая надпись над барной стойкой — видно всем в комнате
+function spawnOrderNotice(name, emoji, item) {
+  const container = document.getElementById('orderNotices');
+  const text = document.createElement('a-text');
+  const offsetX = (Math.random() - 0.5) * 2;
+  text.setAttribute('value', `${emoji} ${item}\n— ${name}`);
+  text.setAttribute('align', 'center');
+  text.setAttribute('color', '#ffd9a0');
+  text.setAttribute('scale', '0.8 0.8 0.8');
+  text.setAttribute('position', `${offsetX} 0 0`);
+  container.appendChild(text);
+
+  text.setAttribute('animation__rise', {
+    property: 'position',
+    to: `${offsetX} 1.2 0`,
+    dur: 3500,
+    easing: 'easeOutQuad',
+  });
+  text.setAttribute('animation__fade', {
+    property: 'text.opacity',
+    from: 1,
+    to: 0,
+    dur: 3500,
+    easing: 'easeInQuad',
+  });
+  setTimeout(() => { if (text.parentNode) text.parentNode.removeChild(text); }, 3600);
+}
