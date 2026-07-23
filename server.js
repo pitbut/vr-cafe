@@ -3,6 +3,7 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const path = require('path');
+const fs = require('fs');
 const fetch = require('node-fetch');
 const { Server } = require('socket.io');
 const { ExpressPeerServer } = require('peer');
@@ -66,6 +67,17 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('order', (data) => {
+    if (currentRoom) {
+      io.to(currentRoom).emit('order', {
+        id: socket.id,
+        name: rooms[currentRoom]?.[socket.id]?.name || 'Гость',
+        item: String(data?.item || '').slice(0, 40),
+        emoji: String(data?.emoji || '☕').slice(0, 4),
+      });
+    }
+  });
+
   socket.on('disconnect', () => {
     if (currentRoom && rooms[currentRoom] && rooms[currentRoom][socket.id]) {
       delete rooms[currentRoom][socket.id];
@@ -115,6 +127,19 @@ app.post('/api/invite', async (req, res) => {
 });
 
 app.get('/api/health', (req, res) => res.json({ ok: true, rooms: Object.keys(rooms).length }));
+
+app.get('/api/tracks', (req, res) => {
+  const musicDir = path.join(__dirname, 'public', 'music');
+  try {
+    if (!fs.existsSync(musicDir)) return res.json({ tracks: [] });
+    const files = fs
+      .readdirSync(musicDir)
+      .filter((f) => /\.(mp3|ogg|wav|m4a)$/i.test(f));
+    res.json({ tracks: files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`🎮 VR Кафе запущено на порту ${PORT}`));
