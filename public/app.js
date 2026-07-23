@@ -275,11 +275,21 @@ async function enterCafe(code) {
   setupStageMusic();
 
   socket = io();
+
+  let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+  try {
+    const iceRes = await fetch('/api/turn-credentials');
+    iceServers = await iceRes.json();
+  } catch (e) {
+    console.warn('Не удалось получить TURN-серверы, используем только STUN:', e.message);
+  }
+
   peer = new Peer(undefined, {
     host: window.location.hostname,
     port: window.location.port || (window.location.protocol === 'https:' ? 443 : 80),
     path: '/peerjs',
     secure: window.location.protocol === 'https:',
+    config: { iceServers },
   });
 
   peer.on('open', (id) => {
@@ -1164,7 +1174,7 @@ function exitBuildMode() {
 
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') exitBuildMode();
-  if (e.key.toLowerCase() === 'r' && isPlacementMode) {
+  if (e.key && e.key.toLowerCase() === 'r' && isPlacementMode) {
     buildRotation = (buildRotation + 90) % 360;
   }
 });
