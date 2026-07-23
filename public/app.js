@@ -86,37 +86,82 @@ document.getElementById('avatarSelect').addEventListener('change', (e) => {
   myAvatarFile = e.target.value;
 });
 
-// Проигрывает анимации из GLB-модели и плавно переключается idle <-> walk
-AFRAME.registerComponent('simple-gltf-anim', {
+// Процедурная анимация скелета: сами крутим кости (руки/ноги/голова) под
+// разные состояния — не зависим от того, есть ли готовые клипы в GLB.
+const BONE_NAMES = [
+  'Hips', 'Spine', 'Spine1', 'Spine2', 'Neck', 'Head',
+  'LeftArm', 'LeftForeArm', 'RightArm', 'RightForeArm',
+  'LeftUpLeg', 'LeftLeg', 'RightUpLeg', 'RightLeg',
+];
+
+AFRAME.registerComponent('bone-anim', {
+  schema: { state: { type: 'string', default: 'idle' } },
   init: function () {
-    this.mixer = null;
-    this.idleAction = null;
-    this.walkAction = null;
-    this.current = null;
+    this.bones = {};
+    this.clock = 0;
     this.el.addEventListener('model-loaded', (e) => {
       const model = e.detail.model;
-      const clips = model.animations || [];
-      if (!clips.length) return;
-      this.mixer = new THREE.AnimationMixer(model);
-      const idleClip = clips.find((c) => /idle|stand|breath/i.test(c.name));
-      const walkClip = clips.find((c) => /walk|run|move/i.test(c.name));
-      this.idleAction = this.mixer.clipAction(idleClip || clips[0]);
-      this.walkAction = walkClip ? this.mixer.clipAction(walkClip) : this.idleAction;
-      this.idleAction.play();
-      this.current = this.idleAction;
+      BONE_NAMES.forEach((n) => {
+        const bone = model.getObjectByName(n);
+        if (bone) {
+          this.bones[n] = bone;
+          bone.userData.restRotation = bone.rotation.clone();
+        }
+      });
     });
   },
-  setMoving: function (moving) {
-    const target = moving ? this.walkAction : this.idleAction;
-    if (!target || this.current === target) return;
-    target.reset().fadeIn(0.25).play();
-    if (this.current) this.current.fadeOut(0.25);
-    this.current = target;
+  setState: function (state) {
+    this.data.state = state;
   },
   tick: function (t, dt) {
-    if (this.mixer) this.mixer.update(dt / 1000);
+    const b = this.bones;
+    if (!b.Hips && !b.Spine) return; // модель ещё не загрузилась
+    this.clock += dt / 1000;
+    const c = this.clock;
+
+    // Сбрасываем к исходной позе перед тем, как применить новую — иначе накопится дрейф
+    Object.keys(b).forEach((name) => {
+      if (b[name].userData.restRotation) b[name].rotation.copy(b[name].userData.restRotation);
+    });
+
+    const st = this.data.state;
+    if (st === 'walk' || st === 'run') {
+      const speed = st === 'run' ? 6.2 : 3.2;
+      const amp = st === 'run' ? 0.85 : 0.5;
+      const phase = c * speed;
+      if (b.LeftUpLeg) b.LeftUpLeg.rotation.x += Math.sin(phase) * amp;
+      if (b.RightUpLeg) b.RightUpLeg.rotation.x += Math.sin(phase + Math.PI) * amp;
+      if (b.LeftLeg) b.LeftLeg.rotation.x += Math.max(0, -Math.sin(phase)) * amp * 1.3;
+      if (b.RightLeg) b.RightLeg.rotation.x += Math.max(0, -Math.sin(phase + Math.PI)) * amp * 1.3;
+      if (b.LeftArm) b.LeftArm.rotation.x += Math.sin(phase + Math.PI) * amp * 0.6;
+      if (b.RightArm) b.RightArm.rotation.x += Math.sin(phase) * amp * 0.6;
+      if (b.Spine) b.Spine.rotation.x += st === 'run' ? 0.18 : 0.04;
+    } else if (st === 'sit') {
+      if (b.LeftUpLeg) b.LeftUpLeg.rotation.x += -1.4;
+      if (b.RightUpLeg) b.RightUpLeg.rotation.x += -1.4;
+      if (b.LeftLeg) b.LeftLeg.rotation.x += 1.3;
+      if (b.RightLeg) b.RightLeg.rotation.x += 1.3;
+      if (b.Spine) b.Spine.rotation.x += 0.05;
+    } else if (st === 'talk') {
+      if (b.Head) {
+        b.Head.rotation.x += Math.sin(c * 3) * 0.04;
+        b.Head.rotation.y += Math.sin(c * 1.3) * 0.09;
+      }
+      if (b.RightForeArm) b.RightForeArm.rotation.z += Math.sin(c * 2.4) * 0.18;
+      if (b.RightArm) b.RightArm.rotation.x += -0.15 + Math.sin(c * 2.4) * 0.05;
+    } else if (st === 'eat') {
+      const cyc = (Math.sin(c * 1.8) + 1) / 2; // 0..1
+      if (b.RightForeArm) b.RightForeArm.rotation.x += -cyc * 1.6;
+      if (b.RightArm) b.RightArm.rotation.z += -cyc * 0.25;
+      if (b.Head) b.Head.rotation.x += cyc * 0.15;
+    } else {
+      // idle — лёгкое дыхание и покачивание
+      if (b.Spine) b.Spine.rotation.x += Math.sin(c * 1.2) * 0.02;
+      if (b.Head) b.Head.rotation.y += Math.sin(c * 0.5) * 0.05;
+    }
   },
 });
+
 
 // ---------- Табы Создать / Войти ----------
 const tabCreate = document.getElementById('tabCreate');
@@ -189,6 +234,7 @@ async function enterCafe(code) {
   document.getElementById('userList').classList.remove('hidden');
   document.getElementById('chatBox').classList.remove('hidden');
   document.getElementById('voiceControls').classList.remove('hidden');
+  document.getElementById('emotesBar').classList.remove('hidden');
   document.getElementById('controlsHint').classList.remove('hidden');
   document.getElementById('roomCodeLabel').textContent = roomCode;
 
@@ -242,23 +288,16 @@ function registerSocketHandlers() {
     addChatLine('Система', `${u.name} зашёл(шла) в кафе`);
   });
 
-  socket.on('user-moved', ({ id, x, y, z, ry }) => {
+  socket.on('user-moved', ({ id, x, y, z, ry, state }) => {
     const p = peers[id];
     if (!p) return;
-    const dx = x - p.x, dz = z - p.z;
-    const moved = Math.sqrt(dx * dx + dz * dz) > 0.01;
     p.x = x; p.z = z;
     if (p.entity) {
       p.entity.setAttribute('position', `${x} 0 ${z}`);
       if (typeof ry === 'number') p.entity.setAttribute('rotation', `0 ${ry} 0`);
     }
-    if (p.modelEl && p.modelEl.components['simple-gltf-anim']) {
-      const anim = p.modelEl.components['simple-gltf-anim'];
-      if (moved) {
-        anim.setMoving(true);
-        clearTimeout(p.idleTimer);
-        p.idleTimer = setTimeout(() => anim.setMoving(false), 400);
-      }
+    if (p.modelEl && p.modelEl.components['bone-anim'] && state) {
+      p.modelEl.components['bone-anim'].setState(state);
     }
   });
 
@@ -290,7 +329,7 @@ function addRemotePlayer(id, u) {
   if (u.avatarFile) {
     modelEl = document.createElement('a-entity');
     modelEl.setAttribute('gltf-model', `/models/${encodeURIComponent(u.avatarFile)}`);
-    modelEl.setAttribute('simple-gltf-anim', '');
+    modelEl.setAttribute('bone-anim', '');
     modelEl.setAttribute('position', '0 0 0');
     entity.appendChild(modelEl);
   } else {
@@ -395,18 +434,43 @@ document.getElementById('muteBtn').addEventListener('click', (e) => {
 // ============================================================
 // ДВИЖЕНИЕ: периодически шлём свою позицию на сервер
 // ============================================================
+let manualState = null; // 'sit' | 'talk' | 'eat' | null (авто idle/walk/run)
+let shiftHeld = false;
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Shift') shiftHeld = true;
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'Shift') shiftHeld = false;
+});
+
+function setEmote(state) {
+  manualState = state; // null снимает ручной режим
+}
+
+document.querySelectorAll('#emotesBar button').forEach((btn) => {
+  btn.addEventListener('click', () => setEmote(btn.dataset.emote || null));
+});
+
 function startMovementSync() {
   const rig = document.getElementById('rig');
   let last = { x: null, z: null };
+  let lastState = null;
   setInterval(() => {
     const pos = rig.object3D.position;
     const rot = rig.object3D.rotation;
     const ry = (rot.y * 180) / Math.PI;
     updateVoiceVolumes(pos);
     updateStageMusicVolume(pos);
-    if (last.x === pos.x && last.z === pos.z) return;
+
+    const posMoved = last.x === null || Math.abs(pos.x - last.x) > 0.005 || Math.abs(pos.z - last.z) > 0.005;
+    const state = manualState || (posMoved ? (shiftHeld ? 'run' : 'walk') : 'idle');
+    const stateChanged = state !== lastState;
+
+    if (!posMoved && !stateChanged) return;
     last = { x: pos.x, z: pos.z };
-    if (socket) socket.emit('move', { x: pos.x, y: pos.y, z: pos.z, ry });
+    lastState = state;
+    if (socket) socket.emit('move', { x: pos.x, y: pos.y, z: pos.z, ry, state });
   }, 120);
 }
 
