@@ -63,6 +63,48 @@ function buildColorPicker() {
 }
 buildColorPicker();
 
+let myAvatarFile = '';
+
+async function loadAvatarList() {
+  try {
+    const res = await fetch('/api/avatars');
+    const data = await res.json();
+    const select = document.getElementById('avatarSelect');
+    (data.avatars || []).forEach((file) => {
+      const opt = document.createElement('option');
+      opt.value = file;
+      opt.textContent = file.replace(/\.[^.]+$/, '');
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    console.warn('Не удалось загрузить список аватаров:', e.message);
+  }
+}
+loadAvatarList();
+
+document.getElementById('avatarSelect').addEventListener('change', (e) => {
+  myAvatarFile = e.target.value;
+});
+
+// Проигрывает встроенные в GLB-модель анимации (ходьба/стойка), без внешних библиотек
+AFRAME.registerComponent('simple-gltf-anim', {
+  init: function () {
+    this.mixer = null;
+    this.el.addEventListener('model-loaded', (e) => {
+      const model = e.detail.model;
+      const clips = model.animations;
+      if (clips && clips.length) {
+        this.mixer = new THREE.AnimationMixer(model);
+        const clip = clips.find((c) => /walk|idle/i.test(c.name)) || clips[0];
+        this.mixer.clipAction(clip).play();
+      }
+    });
+  },
+  tick: function (t, dt) {
+    if (this.mixer) this.mixer.update(dt / 1000);
+  },
+});
+
 // ---------- Табы Создать / Войти ----------
 const tabCreate = document.getElementById('tabCreate');
 const tabJoin = document.getElementById('tabJoin');
@@ -153,7 +195,7 @@ async function enterCafe(code) {
 
   peer.on('open', (id) => {
     myPeerId = id;
-    socket.emit('join-room', { roomCode, name: myName, color: myColor, peerId: myPeerId });
+    socket.emit('join-room', { roomCode, name: myName, color: myColor, peerId: myPeerId, avatarFile: myAvatarFile });
   });
 
   peer.on('call', (call) => {
@@ -190,9 +232,9 @@ function registerSocketHandlers() {
   socket.on('user-moved', ({ id, x, y, z, ry }) => {
     const p = peers[id];
     if (!p) return;
-    p.x = x; p.y = y; p.z = z;
+    p.x = x; p.z = z;
     if (p.entity) {
-      p.entity.setAttribute('position', `${x} ${y} ${z}`);
+      p.entity.setAttribute('position', `${x} 0 ${z}`);
       if (typeof ry === 'number') p.entity.setAttribute('rotation', `0 ${ry} 0`);
     }
   });
@@ -217,18 +259,31 @@ function addRemotePlayer(id, u) {
   if (peers[id]) return;
   const container = document.getElementById('otherPlayers');
   const entity = document.createElement('a-entity');
-  entity.setAttribute('position', `${u.x || 0} ${u.y || 0} ${u.z || 0}`);
+  // Позиция игрока всегда на уровне пола — высота глаз (u.y) сюда не идёт,
+  // иначе аватар "парит" в воздухе.
+  entity.setAttribute('position', `${u.x || 0} 0 ${u.z || 0}`);
 
-  const body = document.createElement('a-cylinder');
-  body.setAttribute('radius', '0.28');
-  body.setAttribute('height', '1.3');
-  body.setAttribute('position', '0 0.9 0');
-  body.setAttribute('color', u.color || '#4FC3F7');
+  if (u.avatarFile) {
+    const model = document.createElement('a-entity');
+    model.setAttribute('gltf-model', `/models/${encodeURIComponent(u.avatarFile)}`);
+    model.setAttribute('simple-gltf-anim', '');
+    model.setAttribute('position', '0 0 0');
+    entity.appendChild(model);
+  } else {
+    const body = document.createElement('a-cylinder');
+    body.setAttribute('radius', '0.28');
+    body.setAttribute('height', '1.3');
+    body.setAttribute('position', '0 0.9 0');
+    body.setAttribute('color', u.color || '#4FC3F7');
 
-  const head = document.createElement('a-sphere');
-  head.setAttribute('radius', '0.22');
-  head.setAttribute('position', '0 1.75 0');
-  head.setAttribute('color', u.color || '#4FC3F7');
+    const head = document.createElement('a-sphere');
+    head.setAttribute('radius', '0.22');
+    head.setAttribute('position', '0 1.75 0');
+    head.setAttribute('color', u.color || '#4FC3F7');
+
+    entity.appendChild(body);
+    entity.appendChild(head);
+  }
 
   const label = document.createElement('a-text');
   label.setAttribute('value', u.name || 'Гость');
@@ -237,13 +292,11 @@ function addRemotePlayer(id, u) {
   label.setAttribute('color', '#fff');
   label.setAttribute('scale', '0.6 0.6 0.6');
   label.setAttribute('side', 'double');
-
-  entity.appendChild(body);
-  entity.appendChild(head);
   entity.appendChild(label);
+
   container.appendChild(entity);
 
-  peers[id] = { entity, audioEl: null, gainNode: null, x: u.x || 0, y: u.y || 0, z: u.z || 0, name: u.name, color: u.color };
+  peers[id] = { entity, audioEl: null, gainNode: null, x: u.x || 0, y: 0, z: u.z || 0, name: u.name, color: u.color };
 }
 
 function removeRemotePlayer(id) {
