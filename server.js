@@ -114,17 +114,23 @@ io.on('connection', (socket) => {
     // Отправляем новичку список уже сидящих в кафе
     socket.emit('room-users', rooms[roomCode]);
 
-    // И то, что уже построено в этой комнате (постоянно хранится в БД)
-    const layout = await ensureLayoutLoaded(roomCode);
-    socket.emit('room-layout', layout);
-
     // Если в комнате сейчас что-то играет — синхронизируем новичка
     if (roomMusic[roomCode]) {
       socket.emit('music-play', roomMusic[roomCode]);
     }
 
-    // Сообщаем остальным о новом госте
+    // Сообщаем остальным о новом госте СРАЗУ — от этого зависит голосовой звонок,
+    // это не должно ждать ответа от базы данных
     socket.to(roomCode).emit('user-joined', { id: socket.id, ...rooms[roomCode][socket.id] });
+
+    // Постройки из БД — отдельно, не блокируя presence/voice-события выше
+    try {
+      const layout = await ensureLayoutLoaded(roomCode);
+      socket.emit('room-layout', layout);
+    } catch (err) {
+      console.error('Не удалось загрузить планировку комнаты:', err.message);
+      socket.emit('room-layout', []);
+    }
   });
 
   socket.on('music-play', ({ file }) => {
