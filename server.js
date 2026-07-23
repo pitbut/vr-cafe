@@ -7,6 +7,7 @@ const fs = require('fs');
 const fetch = require('node-fetch');
 const { Server } = require('socket.io');
 const { ExpressPeerServer } = require('peer');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const server = http.createServer(app);
@@ -22,15 +23,81 @@ app.use('/peerjs', peerServer);
 
 // --- Состояние комнат в памяти: { roomCode: { socketId: {name, color, peerId, x, y, z, ry} } } ---
 const rooms = {};
+// --- Постройки (интерьер) по комнатам: { roomCode: [ {id, category, variant, x, z, ry} ] } ---
+const roomLayouts = {};
+// --- Общая музыка комнаты: { roomCode: { file, startedAt } | null } ---
+const roomMusic = {};
 
 function roomUserCount(roomCode) {
   return rooms[roomCode] ? Object.keys(rooms[roomCode]).length : 0;
 }
 
+// --- MongoDB: постоянное хранение построек (переживает перезапуск сервера) ---
+let db = null;
+async function initDb() {
+  const uri = process.env.MONGODB_URI;
+  if (!uri) {
+    console.warn('MONGODB_URI не задан — постройки будут жить только в памяти (пропадут при перезапуске)');
+    return;
+  }
+  try {
+    const client = new MongoClient(uri);
+    await client.connect();
+    db = client.db('vrcafe');
+    console.log('MongoDB подключена — постройки сохраняются навсегда');
+  } catch (err) {
+    console.error('Не удалось подключиться к MongoDB:', err.message);
+  }
+}
+initDb();
+
+async function loadLayoutFromDb(roomCode) {
+  if (!db) return [];
+  try {
+    const doc = await db.collection('layouts').findOne({ _id: roomCode });
+    return doc ? doc.objects || [] : [];
+  } catch (err) {
+    console.error('Ошибка чтения планировки из БД:', err.message);
+    return [];
+  }
+}
+
+async function ensureLayoutLoaded(roomCode) {
+  if (!roomLayouts[roomCode]) {
+    roomLayouts[roomCode] = await loadLayoutFromDb(roomCode);
+  }
+  return roomLayouts[roomCode];
+}
+
+async function persistAdd(roomCode, item) {
+  if (!db) return;
+  try {
+    await db.collection('layouts').updateOne(
+      { _id: roomCode },
+      { $push: { objects: item } },
+      { upsert: true }
+    );
+  } catch (err) {
+    console.error('Ошибка сохранения объекта в БД:', err.message);
+  }
+}
+
+async function persistRemove(roomCode, id) {
+  if (!db) return;
+  try {
+    await db.collection('layouts').updateOne(
+      { _id: roomCode },
+      { $pull: { objects: { id } } }
+    );
+  } catch (err) {
+    console.error('Ошибка удаления объекта из БД:', err.message);
+  }
+}
+
 io.on('connection', (socket) => {
   let currentRoom = null;
 
-  socket.on('join-room', ({ roomCode, name, color, peerId, avatarFile }) => {
+  socket.on('join-room', async ({ roomCode, name, color, peerId, avatarFile }) => {
     if (!roomCode || !peerId) return;
     currentRoom = roomCode;
     socket.join(roomCode);
@@ -47,8 +114,55 @@ io.on('connection', (socket) => {
     // Отправляем новичку список уже сидящих в кафе
     socket.emit('room-users', rooms[roomCode]);
 
+    // И то, что уже построено в этой комнате (постоянно хранится в БД)
+    const layout = await ensureLayoutLoaded(roomCode);
+    socket.emit('room-layout', layout);
+
+    // Если в комнате сейчас что-то играет — синхронизируем новичка
+    if (roomMusic[roomCode]) {
+      socket.emit('music-play', roomMusic[roomCode]);
+    }
+
     // Сообщаем остальным о новом госте
     socket.to(roomCode).emit('user-joined', { id: socket.id, ...rooms[roomCode][socket.id] });
+  });
+
+  socket.on('music-play', ({ file }) => {
+    if (!currentRoom || !file) return;
+    const state = { file: String(file).slice(0, 150), startedAt: Date.now() };
+    roomMusic[currentRoom] = state;
+    io.to(currentRoom).emit('music-play', state);
+  });
+
+  socket.on('music-stop', () => {
+    if (!currentRoom) return;
+    roomMusic[currentRoom] = null;
+    io.to(currentRoom).emit('music-stop');
+  });
+
+  socket.on('build-place', async (obj) => {
+    if (!currentRoom) return;
+    const item = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      category: String(obj?.category || '').slice(0, 20),
+      variant: String(obj?.variant || '').slice(0, 20),
+      x: Number(obj?.x) || 0,
+      z: Number(obj?.z) || 0,
+      ry: Number(obj?.ry) || 0,
+    };
+    const layout = await ensureLayoutLoaded(currentRoom);
+    layout.push(item);
+    io.to(currentRoom).emit('build-place', item);
+    persistAdd(currentRoom, item);
+  });
+
+  socket.on('build-remove', async ({ id }) => {
+    if (!currentRoom || !id) return;
+    const layout = await ensureLayoutLoaded(currentRoom);
+    const idx = layout.findIndex((o) => o.id === id);
+    if (idx !== -1) layout.splice(idx, 1);
+    io.to(currentRoom).emit('build-remove', { id });
+    persistRemove(currentRoom, id);
   });
 
   socket.on('move', (pos) => {
@@ -83,7 +197,10 @@ io.on('connection', (socket) => {
     if (currentRoom && rooms[currentRoom] && rooms[currentRoom][socket.id]) {
       delete rooms[currentRoom][socket.id];
       socket.to(currentRoom).emit('user-left', { id: socket.id });
-      if (roomUserCount(currentRoom) === 0) delete rooms[currentRoom];
+      if (roomUserCount(currentRoom) === 0) {
+        delete rooms[currentRoom];
+        delete roomMusic[currentRoom];
+      }
     }
   });
 });
