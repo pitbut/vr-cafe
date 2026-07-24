@@ -718,21 +718,43 @@ function buildVipRooms() {
 // ============================================================
 // ОФИЦИАНТЫ (ходят между столиками)
 // ============================================================
-function buildWaiter(name, startPos, endPos, duration, color) {
+const WAITER_PHRASES = [
+  'Что будете заказывать?',
+  'Секунду, уже иду!',
+  'У нас сегодня отличный кофе ☕',
+  'Присаживайтесь, сейчас всё принесу',
+];
+
+const waiters = {}; // waiterId -> { entity, modelEl, patrolStart, patrolEnd, duration, summoned }
+let waiterIdCounter = 0;
+
+function buildWaiter(name, startPos, endPos, duration, color, avatarFile) {
   const container = document.getElementById('npcWaiters');
+  const waiterId = `waiter-${waiterIdCounter++}`;
   const entity = document.createElement('a-entity');
   entity.setAttribute('position', startPos);
+  entity.setAttribute('rotation', '0 90 0');
 
-  const body = document.createElement('a-cylinder');
-  body.setAttribute('radius', '0.26');
-  body.setAttribute('height', '1.3');
-  body.setAttribute('position', '0 0.9 0');
-  body.setAttribute('color', color);
-
-  const head = document.createElement('a-sphere');
-  head.setAttribute('radius', '0.2');
-  head.setAttribute('position', '0 1.75 0');
-  head.setAttribute('color', '#e0a893');
+  let modelEl = null;
+  if (avatarFile) {
+    modelEl = document.createElement('a-entity');
+    modelEl.setAttribute('gltf-model', `/models/${encodeURIComponent(avatarFile)}`);
+    modelEl.setAttribute('bone-anim', '');
+    modelEl.setAttribute('position', '0 0 0');
+    entity.appendChild(modelEl);
+  } else {
+    const body = document.createElement('a-cylinder');
+    body.setAttribute('radius', '0.26');
+    body.setAttribute('height', '1.3');
+    body.setAttribute('position', '0 0.9 0');
+    body.setAttribute('color', color);
+    const head = document.createElement('a-sphere');
+    head.setAttribute('radius', '0.2');
+    head.setAttribute('position', '0 1.75 0');
+    head.setAttribute('color', '#e0a893');
+    entity.appendChild(body);
+    entity.appendChild(head);
+  }
 
   const label = document.createElement('a-text');
   label.setAttribute('value', name);
@@ -740,11 +762,10 @@ function buildWaiter(name, startPos, endPos, duration, color) {
   label.setAttribute('position', '0 2.1 0');
   label.setAttribute('color', '#fff');
   label.setAttribute('scale', '0.55 0.55 0.55');
-
-  entity.appendChild(body);
-  entity.appendChild(head);
   entity.appendChild(label);
+
   container.appendChild(entity);
+  entity.object3D.userData.waiterId = waiterId;
 
   entity.setAttribute('animation__go', {
     property: 'position',
@@ -754,12 +775,72 @@ function buildWaiter(name, startPos, endPos, duration, color) {
     loop: true,
     easing: 'easeInOutSine',
   });
+
+  waiters[waiterId] = { entity, modelEl, startPos, endPos, duration, summoned: false, returnTimer: null };
 }
 
 function buildWaiters() {
-  buildWaiter('Официант', '-6 0 -4', '6 0 -4', 9000, '#1abc9c');
-  buildWaiter('Официантка', '6 0 3', '-6 0 3', 11000, '#e67e22');
+  buildWaiter('Официант', '-6 0 -4', '6 0 -4', 9000, '#1abc9c', 'waiter1.glb');
+  buildWaiter('Официантка', '6 0 3', '-6 0 3', 11000, '#e67e22', 'waiter2.glb');
 }
+
+// Речевая реплика над головой официанта
+function spawnSpeechBubble(entity, text) {
+  const bubble = document.createElement('a-text');
+  bubble.setAttribute('value', text);
+  bubble.setAttribute('align', 'center');
+  bubble.setAttribute('color', '#ffe9c8');
+  bubble.setAttribute('scale', '0.5 0.5 0.5');
+  bubble.setAttribute('position', '0 2.5 0');
+  entity.appendChild(bubble);
+  setTimeout(() => { if (bubble.parentNode) bubble.parentNode.removeChild(bubble); }, 3500);
+}
+
+// Подзываем официанта — он подходит к игроку, говорит реплику и открывает меню
+function summonWaiter(waiterId) {
+  const w = waiters[waiterId];
+  if (!w || w.summoned) return;
+  w.summoned = true;
+
+  // Останавливаем патрулирование
+  const goAnim = w.entity.components['animation__go'];
+  if (goAnim) goAnim.pauseAnimation();
+
+  const rig = document.getElementById('rig');
+  const playerPos = rig.object3D.position;
+  const targetX = playerPos.x + 1.2;
+  const targetZ = playerPos.z + 1.2;
+
+  if (w.modelEl && w.modelEl.components['bone-anim']) {
+    w.modelEl.components['bone-anim'].setState('walk');
+  }
+
+  w.entity.setAttribute('animation__summon', {
+    property: 'position',
+    to: `${targetX} 0 ${targetZ}`,
+    dur: 1800,
+    easing: 'easeInOutQuad',
+  });
+
+  clearTimeout(w.returnTimer);
+  w.returnTimer = setTimeout(() => {
+    if (w.modelEl && w.modelEl.components['bone-anim']) {
+      w.modelEl.components['bone-anim'].setState('talk');
+    }
+    spawnSpeechBubble(w.entity, WAITER_PHRASES[Math.floor(Math.random() * WAITER_PHRASES.length)]);
+    document.getElementById('menuBtn').click();
+  }, 1900);
+
+  // Через некоторое время официант возвращается патрулировать
+  w.returnTimer = setTimeout(() => {
+    if (w.modelEl && w.modelEl.components['bone-anim']) {
+      w.modelEl.components['bone-anim'].setState('idle');
+    }
+    if (goAnim) goAnim.resumeAnimation();
+    w.summoned = false;
+  }, 9000);
+}
+
 
 // ============================================================
 // МУЗЫКА: реальные треки (из public/music) + «живая» на сцене караоке
@@ -1257,6 +1338,21 @@ document.addEventListener('click', (e) => {
       while (obj && !obj.userData.buildId) obj = obj.parent;
       if (obj && obj.userData.buildId && socket) {
         socket.emit('build-remove', { id: obj.userData.buildId });
+      }
+    }
+  } else {
+    // Не в режиме стройки — проверяем, не кликнули ли по официанту
+    const camEl = document.getElementById('camera');
+    const camera = camEl.getObject3D('camera');
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+    const npcContainer = document.getElementById('npcWaiters').object3D;
+    const hits = raycaster.intersectObject(npcContainer, true);
+    if (hits.length) {
+      let obj = hits[0].object;
+      while (obj && !obj.userData.waiterId) obj = obj.parent;
+      if (obj && obj.userData.waiterId) {
+        summonWaiter(obj.userData.waiterId);
       }
     }
   }
